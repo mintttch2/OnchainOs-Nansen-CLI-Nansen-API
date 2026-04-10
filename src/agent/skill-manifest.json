@@ -1,0 +1,60 @@
+{
+  "name": "nansen-onchainos-alpha",
+  "version": "1.0.0",
+  "description": "AI Agent skills that combine Nansen Smart Money Intelligence with OKX OnchainOS for automated on-chain alpha discovery and trade execution",
+  "author": "NansenOS Team",
+  "homepage": "https://github.com/mintttch2/onchainos-nansen-cli-nansen-api",
+  "skills": [
+    {
+      "name": "nansen_alpha_scan",
+      "description": "Scans Nansen smart money data to detect alpha signals — tokens being accumulated by funds, whales, and smart traders. Returns ranked signals with confidence scores.",
+      "category": "analytics",
+      "chains": ["ethereum", "solana", "polygon", "arbitrum", "xlayer", "bsc", "base"],
+      "credits_per_call": 5
+    },
+    {
+      "name": "nansen_smart_money_holdings",
+      "description": "Shows what tokens smart money wallets are currently holding, ranked by total USD value.",
+      "category": "analytics",
+      "chains": ["ethereum", "solana", "polygon", "arbitrum", "xlayer", "bsc", "base"],
+      "credits_per_call": 5
+    },
+    {
+      "name": "nansen_fund_tracker",
+      "description": "Tracks crypto fund buying and selling activity to identify institutional conviction.",
+      "category": "analytics",
+      "chains": ["ethereum", "solana", "polygon", "arbitrum", "xlayer", "bsc", "base"],
+      "credits_per_call": 5
+    },
+    {
+      "name": "nansen_signal_trade",
+      "description": "Detects alpha signals and executes trades via OKX OnchainOS DEX aggregator.",
+      "category": "trading",
+      "chains": ["xlayer", "ethereum", "polygon", "arbitrum"],
+      "credits_per_call": 10
+    },
+    {
+      "name": "nansen_ask",
+      "description": "Ask the Nansen AI agent questions about on-chain data and market analysis.",
+      "category": "intelligence",
+      "chains": ["all"],
+      "credits_per_call": "200-750"
+    }
+  ],
+  "requirements": {
+    "nansen_api_key": true,
+    "onchainos_api_key": true,
+    "onchainos_wallet": "optional (required for trading)"
+  },
+  "hackathon": {
+    "event": "OKX Build X Hackathon 2026",
+    "tracks": ["X Layer Arena", "Skills Arena"],
+    "features": [
+      "Smart money alpha detection across multiple chains",
+      "Automated trade execution via OnchainOS DEX aggregation",
+      "Natural language chat interface for on-chain intelligence",
+      "Multi-signal convergence detection for high-confidence entries",
+      "Reusable OnchainOS skills for other agents to integrate"
+    ]
+  }
+}
