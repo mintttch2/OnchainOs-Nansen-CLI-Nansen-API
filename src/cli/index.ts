@@ -2,89 +2,69 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { loadConfig, validateConfig } from '../config';
-import { scanCommand } from './commands/scan';
-import { holdingsCommand } from './commands/holdings';
-import { tradeCommand } from './commands/trade';
-import { monitorCommand } from './commands/monitor';
-import { walletCommand } from './commands/wallet';
-import { agentCommand } from './commands/agent';
+import { scanCommand } from './commands/hl-scan';
+import { sentimentCommand } from './commands/hl-sentiment';
+import { positionsCommand } from './commands/hl-positions';
+import { newPositionsCommand } from './commands/hl-new-positions';
+import { copyCommand } from './commands/hl-copy';
+import { tradeCommand } from './commands/hl-trade';
 
 const program = new Command();
 
-const BANNER = `
-${chalk.cyan.bold('╔══════════════════════════════════════════════════════════╗')}
-${chalk.cyan.bold('║')}  ${chalk.white.bold('NansenOS Alpha Agent')}                                    ${chalk.cyan.bold('║')}
-${chalk.cyan.bold('║')}  ${chalk.gray('Nansen Smart Money Intelligence × OKX OnchainOS')}         ${chalk.cyan.bold('║')}
-${chalk.cyan.bold('║')}  ${chalk.gray('Discover alpha. Execute on-chain. Autonomously.')}         ${chalk.cyan.bold('║')}
-${chalk.cyan.bold('╚══════════════════════════════════════════════════════════╝')}
-`;
+console.log(chalk.cyan.bold('\nHyperNansen — Hyperliquid Smart Money Intelligence'));
+console.log(chalk.gray('Nansen Smart Money Data  ×  OKX OnchainOS Hyperliquid Plugin\n'));
 
 program
-  .name('nansen-os')
-  .version('1.0.0')
-  .description('AI Agent combining Nansen Smart Money data with OKX OnchainOS execution')
-  .addHelpText('before', BANNER)
-  .hook('preAction', () => {
-    const config = loadConfig();
-    const errors = validateConfig(config);
-    if (errors.length > 0) {
-      console.log(chalk.yellow('\nConfiguration warnings:'));
-      errors.forEach(e => console.log(chalk.yellow(`  - ${e}`)));
-      console.log(chalk.gray('  Run with --help or check .env.example\n'));
-    }
-  });
-
-// ─── Commands ───
+  .name('hypernansen')
+  .version('2.0.0')
+  .description('Hyperliquid smart money intelligence powered by Nansen + OKX OnchainOS');
 
 program
   .command('scan')
-  .description('Scan for smart money alpha signals')
-  .option('-c, --chain <chains...>', 'Chains to scan (default: all)')
-  .option('-l, --limit <number>', 'Max signals to show', '20')
-  .option('--min-confidence <number>', 'Minimum confidence threshold (0-1)', '0.7')
+  .description('Find tokens where smart money is most active on Hyperliquid perps')
+  .option('-h, --hours <number>', 'Lookback window in hours', '24')
+  .option('-l, --limit <number>', 'Number of results', '15')
   .option('--json', 'Output as JSON')
   .action(scanCommand);
 
 program
-  .command('holdings')
-  .description('View top smart money holdings')
-  .option('-c, --chain <chains...>', 'Chains to filter')
+  .command('sentiment <token>')
+  .description('Smart money long/short sentiment for a token (BTC, ETH, SOL...)')
+  .option('--json', 'Output as JSON')
+  .action(sentimentCommand);
+
+program
+  .command('positions <token>')
+  .description('See which smart money wallets are long/short a specific perp')
+  .option('-s, --side <side>', 'Filter: Long or Short')
+  .option('-l, --limit <number>', 'Number of results', '15')
+  .option('--json', 'Output as JSON')
+  .action(positionsCommand);
+
+program
+  .command('new')
+  .description('Show latest smart money position opens on Hyperliquid')
+  .option('-t, --token <symbol>', 'Filter by token')
+  .option('-s, --side <side>', 'Filter: Long or Short')
   .option('-l, --limit <number>', 'Number of results', '20')
   .option('--json', 'Output as JSON')
-  .action(holdingsCommand);
+  .action(newPositionsCommand);
+
+program
+  .command('copy <token>')
+  .description('Find the best smart money trader to copy on a token')
+  .option('-s, --side <side>', 'Preferred side: Long or Short')
+  .action(copyCommand);
 
 program
   .command('trade')
-  .description('Get swap quote or execute trade via OnchainOS')
-  .requiredOption('-t, --token <address>', 'Token address to buy')
-  .option('-c, --chain <chain>', 'Chain', 'xlayer')
-  .option('-a, --amount <usd>', 'Amount in USD', '100')
-  .option('--execute', 'Actually execute the trade (default: quote only)')
-  .option('--slippage <percent>', 'Max slippage %', '1.0')
+  .description('Execute a Hyperliquid perp trade via OKX OnchainOS')
+  .requiredOption('-t, --token <symbol>', 'Token symbol')
+  .requiredOption('-s, --side <side>', 'Long or Short')
+  .requiredOption('-z, --size <usd>', 'Position size in USD')
+  .option('-l, --leverage <x>', 'Leverage (1-20x)', '5')
+  .option('--limit-price <price>', 'Limit price (omit = Market order)')
+  .option('--live', 'Submit real trade (default: dry run simulation)')
   .action(tradeCommand);
-
-program
-  .command('wallet')
-  .description('Check wallet balances via OnchainOS')
-  .option('-a, --address <address>', 'Wallet address (default: from config)')
-  .option('-c, --chain <chain>', 'Chain', 'xlayer')
-  .option('--json', 'Output as JSON')
-  .action(walletCommand);
-
-program
-  .command('monitor')
-  .description('Continuously monitor smart money and alert on signals')
-  .option('-c, --chain <chains...>', 'Chains to monitor')
-  .option('-i, --interval <seconds>', 'Scan interval in seconds', '300')
-  .option('--auto-trade', 'Enable automatic trade execution')
-  .action(monitorCommand);
-
-program
-  .command('agent')
-  .description('Ask Nansen AI agent a question about on-chain data')
-  .argument('<question>', 'Question to ask')
-  .option('--expert', 'Use expert tier (750 credits)')
-  .action(agentCommand);
 
 program.parse();

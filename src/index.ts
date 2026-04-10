@@ -1,34 +1,47 @@
-// NansenOS Alpha Agent
-// Combines Nansen Smart Money Intelligence with OKX OnchainOS for on-chain alpha discovery and execution
+/**
+ * HyperNansen — Hyperliquid Smart Money Intelligence
+ * Nansen Smart Money Data × OKX OnchainOS Hyperliquid Plugin
+ *
+ * Built for OKX Build X Hackathon 2026
+ * Tracks: Skills Arena + X Layer Arena
+ */
 
-export { NansenClient } from './nansen/client';
-export { OnchainOsClient } from './onchainos/client';
-export { AlphaDetector } from './strategies/alpha-detector';
-export { TradeExecutor } from './strategies/executor';
-export { createNansenSkills } from './agent/skills';
+// ─── Phase 2: Hyperliquid Core (primary exports) ─────────────────────────────
+
+export { NansenHyperliquidClient } from './nansen/hyperliquid-client';
+export { OnchainOsHyperliquidClient } from './onchainos/hyperliquid-client';
+export { createHyperliquidSkills } from './agent/hyperliquid-skills';
 export { loadConfig, validateConfig } from './config';
 
 export type {
-  SmartMoneyNetflow,
-  SmartMoneyHolding,
-  SmartMoneyDexTrade,
-  TokenScreenerResult,
-  SmartMoneyNetflowRequest,
-  SmartMoneyHoldingsRequest,
-  TokenScreenerRequest,
-} from './nansen/types';
+  PerpSide,
+  SmartMoneyHLLabel,
+  PerpSentiment,
+  CopyTradeSetup,
+  SmartMoneyPerpTrade,
+  SmartMoneyPerpTradesRequest,
+  SmartMoneyPerpTradesResponse,
+  PerpScreenerToken,
+  PerpScreenerRequest,
+  PerpScreenerResponse,
+  PerpPosition,
+  TokenPerpPositionsRequest,
+  TokenPerpPositionsResponse,
+  AddressPerpPositionsRequest,
+  AddressPerpPositionsResponse,
+} from './nansen/hyperliquid-types';
 
 export type {
-  SwapQuote,
-  SwapResult,
-  MarketTokenPrice,
+  HLSide,
+  HLOrderType,
+  HLPlaceOrderRequest,
+  HLOrderResult,
+  HLClosePositionRequest,
+  HLSetLeverageRequest,
+  HLAccountSummary,
+} from './onchainos/hyperliquid-client';
+
+export type {
   SkillDefinition,
   SkillResponse,
 } from './onchainos/types';
-
-export type {
-  AlphaSignal,
-  SignalType,
-  SignalStrength,
-  StrategyConfig,
-} from './strategies/types';

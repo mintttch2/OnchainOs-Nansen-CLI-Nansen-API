@@ -1,9 +1,9 @@
 import express from 'express';
 import chalk from 'chalk';
 import { loadConfig } from '../config';
-import { NansenClient } from '../nansen/client';
-import { OnchainOsClient } from '../onchainos/client';
-import { createNansenSkills } from './skills';
+import { NansenHyperliquidClient } from '../nansen/hyperliquid-client';
+import { OnchainOsHyperliquidClient } from '../onchainos/hyperliquid-client';
+import { createHyperliquidSkills } from './hyperliquid-skills';
 import { logger } from '../utils/logger';
 import { SkillDefinition } from '../onchainos/types';
 
@@ -11,158 +11,82 @@ const PORT = process.env.AGENT_PORT || 3100;
 
 async function startAgentServer(): Promise<void> {
   const config = loadConfig();
-  const nansen = new NansenClient(config.nansen.apiKey, config.nansen.baseUrl);
-  const onchainOs = new OnchainOsClient(
+  const dryRun = config.agent.mode !== 'auto-trade';
+
+  const nansenHL = new NansenHyperliquidClient(config.nansen.apiKey, config.nansen.baseUrl);
+  const onchainHL = new OnchainOsHyperliquidClient(
     config.onchainOs.apiKey,
     config.onchainOs.apiSecret,
-    config.onchainOs.baseUrl
+    config.onchainOs.baseUrl,
+    dryRun
   );
 
-  const skills = createNansenSkills(nansen, onchainOs, config);
+  const skills = createHyperliquidSkills(nansenHL, onchainHL, config);
   const skillMap = new Map<string, SkillDefinition>(skills.map(s => [s.name, s]));
 
   const app = express();
   app.use(express.json());
 
-  // ─── Health Check ───
-
   app.get('/health', (_req, res) => {
-    res.json({ status: 'ok', skills: skills.map(s => s.name) });
+    res.json({ status: 'ok', agent: 'HyperNansen', mode: config.agent.mode, dry_run: dryRun, skills: skills.map(s => s.name) });
   });
-
-  // ─── List Skills (OnchainOS skill discovery) ───
 
   app.get('/skills', (_req, res) => {
-    const manifest = skills.map(s => ({
-      name: s.name,
-      description: s.description,
-      parameters: s.parameters,
-    }));
-    res.json({ skills: manifest });
+    res.json({ skills: skills.map(s => ({ name: s.name, description: s.description, parameters: s.parameters })) });
   });
-
-  // ─── Execute Skill ───
 
   app.post('/skills/:skillName', async (req, res) => {
     const { skillName } = req.params;
     const skill = skillMap.get(skillName);
-
-    if (!skill) {
-      res.status(404).json({ error: `Skill '${skillName}' not found` });
-      return;
-    }
-
+    if (!skill) { res.status(404).json({ error: `Skill '${skillName}' not found` }); return; }
     logger.info(`Executing skill: ${skillName}`);
-
     try {
       const result = await skill.execute(req.body);
       res.json(result);
-    } catch (error) {
-      logger.error(`Skill execution failed: ${error}`);
-      res.status(500).json({
-        success: false,
-        data: null,
-        message: `Execution failed: ${error instanceof Error ? error.message : String(error)}`,
-      });
+    } catch (err) {
+      res.status(500).json({ success: false, data: null, message: String(err) });
     }
   });
 
-  // ─── Natural Language Interface ───
-
   app.post('/chat', async (req, res) => {
-    const { message } = req.body;
-
-    if (!message) {
-      res.status(400).json({ error: 'message is required' });
-      return;
-    }
-
+    const { message } = req.body as { message?: string };
+    if (!message) { res.status(400).json({ error: 'message is required' }); return; }
     logger.info(`Chat: "${message}"`);
-
-    const intent = detectIntent(message, skills);
-
+    const intent = detectIntent(message.toLowerCase());
     if (!intent) {
       res.json({
-        response: 'I can help you with smart money analysis, fund tracking, token scanning, and trading via OnchainOS. Try asking about smart money holdings or alpha signals.',
-        available_skills: skills.map(s => ({ name: s.name, description: s.description })),
+        response: 'Try: "scan smart money perps" | "BTC sentiment" | "who is long ETH" | "new positions" | "copy trade SOL"',
+        skills: skills.map(s => s.name),
       });
       return;
     }
-
+    const skill = skillMap.get(intent.skillName);
+    if (!skill) { res.status(500).json({ error: 'Skill not found' }); return; }
     try {
-      const result = await intent.skill.execute(intent.params);
+      const result = await skill.execute(intent.params);
       res.json({ response: result.message, data: result.data });
-    } catch (error) {
-      res.status(500).json({
-        response: `Sorry, I encountered an error: ${error instanceof Error ? error.message : String(error)}`,
-      });
+    } catch (err) {
+      res.status(500).json({ response: String(err) });
     }
   });
 
   app.listen(PORT, () => {
-    console.log(chalk.cyan.bold(`\nNansenOS Agent Server running on port ${PORT}`));
-    console.log(chalk.gray(`Available skills:`));
-    skills.forEach(s => {
-      console.log(chalk.gray(`  - ${s.name}: ${s.description.slice(0, 80)}...`));
-    });
-    console.log('');
+    console.log(chalk.cyan.bold(`\nHyperNansen Agent — :${PORT} | Mode: ${config.agent.mode} | Dry run: ${dryRun}`));
+    console.log(chalk.gray(`Skills: ${skills.map(s => s.name).join(', ')}\n`));
   });
 }
 
-interface DetectedIntent {
-  skill: SkillDefinition;
-  params: Record<string, unknown>;
-}
+function detectIntent(msg: string): { skillName: string; params: Record<string, unknown> } | null {
+  const knownTokens = ['BTC', 'ETH', 'SOL', 'ARB', 'OP', 'AVAX', 'DOGE', 'LINK', 'UNI', 'HYPE', 'WIF', 'PENGU'];
+  const token = knownTokens.find(t => msg.includes(t.toLowerCase()));
+  const side = msg.includes('long') ? 'Long' : msg.includes('short') ? 'Short' : undefined;
 
-function detectIntent(message: string, skills: SkillDefinition[]): DetectedIntent | null {
-  const lower = message.toLowerCase();
-
-  // Alpha scan intent
-  if (lower.includes('alpha') || lower.includes('signal') || lower.includes('scan') || lower.includes('opportunity')) {
-    const skill = skills.find(s => s.name === 'nansen_alpha_scan');
-    if (!skill) return null;
-    const chainMatch = lower.match(/on\s+(ethereum|solana|polygon|arbitrum|xlayer|bsc|base)/);
-    return {
-      skill,
-      params: {
-        chains: chainMatch ? [chainMatch[1]] : 'all',
-      },
-    };
-  }
-
-  // Holdings intent
-  if (lower.includes('holding') || lower.includes('portfolio') || lower.includes('what are.*holding')) {
-    const skill = skills.find(s => s.name === 'nansen_smart_money_holdings');
-    if (!skill) return null;
-    return { skill, params: {} };
-  }
-
-  // Fund tracking intent
-  if (lower.includes('fund') || lower.includes('institution') || lower.includes('vc')) {
-    const skill = skills.find(s => s.name === 'nansen_fund_tracker');
-    if (!skill) return null;
-    return { skill, params: {} };
-  }
-
-  // Trade intent
-  if (lower.includes('trade') || lower.includes('buy') || lower.includes('swap') || lower.includes('execute')) {
-    const skill = skills.find(s => s.name === 'nansen_signal_trade');
-    if (!skill) return null;
-    return {
-      skill,
-      params: {
-        auto_execute: lower.includes('execute') || lower.includes('auto'),
-      },
-    };
-  }
-
-  // General question - route to Nansen agent
-  if (lower.includes('?') || lower.includes('what') || lower.includes('how') || lower.includes('why')) {
-    const skill = skills.find(s => s.name === 'nansen_ask');
-    if (!skill) return null;
-    return { skill, params: { question: message } };
-  }
-
+  if (msg.match(/scan|where.*smart money|top perp|active/)) return { skillName: 'hl_smart_money_scan', params: {} };
+  if (msg.match(/new position|just open|latest|recent/)) return { skillName: 'hl_new_positions', params: { token, side } };
+  if (token && msg.match(/sentiment|think|bullish|bearish|bias/)) return { skillName: 'hl_sentiment', params: { token } };
+  if (token && msg.match(/who is|position|holding/)) return { skillName: 'hl_who_is_positioned', params: { token, side } };
+  if (msg.match(/copy|follow|which trader/)) return { skillName: 'hl_copy_setup', params: { token, preferred_side: side } };
+  if (token && msg.match(/trade|execute|open|buy|sell/)) return { skillName: 'hl_execute_trade', params: { token, side: side ?? 'Long', size_usd: 100, leverage: 5 } };
   return null;
 }
 

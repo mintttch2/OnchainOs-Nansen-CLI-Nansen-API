@@ -1,195 +1,281 @@
-# NansenOS Alpha Agent
+# HyperNansen
 
-**AI Agent that combines Nansen Smart Money Intelligence with OKX OnchainOS for automated on-chain alpha discovery and execution.**
+**Hyperliquid Smart Money Intelligence — Nansen perp data × OKX OnchainOS Hyperliquid plugin.**
 
-Built for the [OKX Build X Hackathon 2026](https://web3.okx.com/xlayer/build-x-hackathon) — X Layer Arena + Skills Arena tracks.
+Built for the [OKX Build X Hackathon 2026](https://web3.okx.com/xlayer/build-x-hackathon) — Skills Arena track.
 
 ---
 
 ## What It Does
 
-NansenOS Alpha Agent bridges **Nansen's smart money analytics** with **OKX OnchainOS's trading infrastructure** to create an autonomous AI agent that can:
+HyperNansen connects two best-in-class systems:
 
-1. **Detect Alpha** — Scans Nansen's Smart Money data (netflows, holdings, DEX trades) to identify tokens being accumulated by funds, whales, and top traders
-2. **Score Signals** — Applies multi-factor analysis with confidence scoring and signal convergence detection
-3. **Execute Trades** — Routes orders through OnchainOS DEX aggregator for optimal execution across chains (including X Layer)
-4. **Monitor Continuously** — Runs as a persistent agent that watches for new signals and can auto-trade
+| Layer | Technology | What it provides |
+|-------|-----------|-----------------|
+| **Intelligence** | [Nansen API](https://docs.nansen.ai/api/hyperliquid) | Real-time smart money perp positioning on Hyperliquid |
+| **Execution** | [OKX OnchainOS](https://web3.okx.com/onchainos/plugins/detail/hyperliquid) | Hyperliquid perp trade execution via AI plugin |
+
+**The result:** An AI agent + CLI that reads where smart money (Funds, top traders) is positioned on Hyperliquid and can execute copy trades through OnchainOS — with dry-run safety by default.
 
 ```
-Nansen Smart Money Data ──> Alpha Detection Engine ──> Signal Scoring
-                                                            │
-                                                            v
-OKX OnchainOS DEX ◄──── Trade Execution ◄──── Buy/Watch Decision
+Nansen Hyperliquid perp data ──> Smart Money Positioning
+         │                              │
+         ▼                              ▼
+  Sentiment Signal              Copy Trade Setup
+  (STRONG LONG / SHORT)         (best trader, safe leverage)
+         │                              │
+         └──────────────┬───────────────┘
+                        ▼
+         OKX OnchainOS Hyperliquid Plugin
+           (place order, set leverage)
 ```
+
+---
+
+## Features
+
+### CLI (`hypernansen`)
+
+| Command | What it does |
+|---------|-------------|
+| `scan` | Find tokens where smart money is most active on HL perps |
+| `sentiment <TOKEN>` | Get `STRONG LONG` / `LEAN SHORT` signal with confidence % |
+| `positions <TOKEN>` | See which SM wallets are long/short with PnL + liq distance |
+| `new` | Latest smart money position opens (real-time entries) |
+| `copy <TOKEN>` | Find best trader to copy — highest PnL, safe leverage |
+| `trade` | Execute long/short via OKX OnchainOS (dry run by default) |
+
+### Agent Skills (6 skills)
+
+| Skill | Description |
+|-------|-------------|
+| `hl_smart_money_scan` | Ranked SM activity across all HL perp tokens |
+| `hl_sentiment` | Composite signal from positioning + 24h flow data |
+| `hl_who_is_positioned` | Per-wallet view: size, entry, liq, PnL |
+| `hl_new_positions` | Real-time SM opens (Fund/Smart Trader labels only) |
+| `hl_copy_setup` | Top trader recommendation with risk assessment |
+| `hl_execute_trade` | Order execution via OnchainOS (dry run default) |
+
+---
+
+## Quick Start
+
+### Install
+
+```bash
+git clone https://github.com/mintttch2/OnchainOs-Nansen-CLI-Nansen-API
+cd OnchainOs-Nansen-CLI-Nansen-API
+npm install
+npm run build
+```
+
+### Configure
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env`:
+```
+NANSEN_API_KEY=...         # https://app.nansen.ai/auth/agent-setup
+ONCHAINOS_API_KEY=...      # https://web3.okx.com/onchainos
+ONCHAINOS_API_SECRET=...
+ONCHAINOS_WALLET_ADDRESS=...
+```
+
+### Use
+
+```bash
+# Find where smart money is active
+npx hypernansen scan
+
+# Check BTC sentiment
+npx hypernansen sentiment BTC
+
+# Who is long ETH right now?
+npx hypernansen positions ETH --side Long
+
+# Latest smart money opens
+npx hypernansen new --limit 20
+
+# Best trader to copy on SOL
+npx hypernansen copy SOL
+
+# Dry-run a trade (safe — no real order)
+npx hypernansen trade -t BTC -s Long -z 100 -l 5
+
+# Live trade (requires --live + confirmation)
+npx hypernansen trade -t BTC -s Long -z 100 -l 5 --live
+```
+
+### Run as Agent Server
+
+```bash
+npm run agent:start
+# Listening on http://localhost:3100
+
+# Natural language
+curl -X POST http://localhost:3100/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"message": "what is smart money doing on BTC"}'
+
+# Execute skill
+curl -X POST http://localhost:3100/skills/hl_sentiment \
+  -H 'Content-Type: application/json' \
+  -d '{"token": "ETH"}'
+```
+
+---
+
+## Typical Workflow
+
+```bash
+# 1. Scan — find the most active token
+$ hypernansen scan
+  BTC    +$12.4M  42 longs  11 shorts  LONG bias (79%)
+  ETH    +$8.1M   31 longs  18 shorts  LONG bias (63%)
+  SOL    -$3.2M   9 longs   28 shorts  SHORT bias (24%)
+
+# 2. Confirm sentiment on top token
+$ hypernansen sentiment BTC
+  Signal:    >>> STRONG LONG (84% confidence)
+  SM Longs:  42 wallets ($31.2M)
+  SM Shorts: 11 wallets ($8.1M)
+  L/S Ratio: 3.85x | Net: +$23.1M
+  24h Flow:  Buy 76% / Sell 24%
+
+# 3. Find best trader to copy
+$ hypernansen copy BTC
+  Source:    NansenFund_Alpha
+  Direction: Long
+  Leverage:  8x (capped from source)
+  Trader PnL: +$180,420
+  Dist to Liq: 22.4% — moderate risk
+  → Run: hypernansen trade -t BTC -s Long -z 100 -l 8
+
+# 4. Execute (dry run first, then --live)
+$ hypernansen trade -t BTC -s Long -z 100 -l 8
+  [DRY RUN] Long BTC $100 @ 8x
+  Est. fee: $0.05
+  → To submit: add --live flag
+```
+
+---
 
 ## Architecture
 
 ```
 src/
-├── nansen/           # Nansen API client (Smart Money, Token Screener, Agent)
-├── onchainos/        # OKX OnchainOS client (Wallet, Trade, Market)
-├── strategies/       # Alpha detection & trade execution logic
-│   ├── alpha-detector.ts   # Multi-strategy signal detection
-│   └── executor.ts         # Signal-to-trade pipeline
-├── agent/            # OnchainOS Skill server (HTTP + natural language)
-│   ├── skills.ts           # 5 reusable skills for OnchainOS
-│   ├── server.ts           # Express server with chat interface
-│   └── skill-manifest.json # Skill discovery manifest
-├── cli/              # Interactive CLI tool
-│   └── commands/     # scan, holdings, trade, wallet, monitor, agent
-├── config/           # Environment config management
-└── utils/            # Logger, formatting helpers
+├── nansen/
+│   ├── hyperliquid-types.ts     # All Nansen HL type definitions
+│   └── hyperliquid-client.ts    # NansenHyperliquidClient
+│       ├── getSmartMoneyPerpTrades()    → /api/v1/smart-money/perp-trades
+│       ├── screenPerps()               → /api/v1/perp-screener
+│       ├── getTokenPerpPositions()     → /api/v1/tgm/perp-positions
+│       ├── getAddressPerpPositions()   → /api/v1/profiler/perp-positions
+│       ├── getSmartMoneySentiment()    → computed composite signal
+│       └── getCopyTradeSetup()         → best trader by uPnL + safety
+│
+├── onchainos/
+│   └── hyperliquid-client.ts    # OnchainOsHyperliquidClient
+│       ├── placeOrder()         → POST /hyperliquid/order
+│       ├── closePosition()      → POST /hyperliquid/close
+│       ├── setLeverage()        → POST /hyperliquid/leverage
+│       └── getAccountSummary()  → GET /hyperliquid/account
+│
+├── agent/
+│   ├── hyperliquid-skills.ts    # 6 SkillDefinition objects
+│   └── server.ts                # Express skill server + /chat NLP
+│
+├── cli/
+│   ├── index.ts                 # Commander CLI entry
+│   └── commands/
+│       ├── hl-scan.ts           # scan command
+│       ├── hl-sentiment.ts      # sentiment command
+│       ├── hl-positions.ts      # positions command
+│       ├── hl-new-positions.ts  # new command
+│       ├── hl-copy.ts           # copy command
+│       └── hl-trade.ts          # trade command (OnchainOS execution)
+│
+├── config/index.ts              # AppConfig + loadConfig()
+└── utils/
+    ├── formatting.ts            # formatUsd, formatPercent
+    └── logger.ts                # Colored logger
 ```
 
-## Quick Start
+---
 
-### 1. Install
+## Smart Money Sentiment Algorithm
 
-```bash
-git clone https://github.com/mintttch2/onchainos-nansen-cli-nansen-api.git
-cd onchainos-nansen-cli-nansen-api
-npm install
+The `getSmartMoneySentiment()` method combines two data sources into a composite score:
+
+1. **Positioning score** (60% weight): `smartMoneyLongUsd / (longUsd + shortUsd)`
+2. **Flow score** (40% weight): `buyVolume / (buyVolume + sellVolume)` from 24h perp screener
+
+```
+compositeScore = longBias × 0.6 + flowBias × 0.4
+
+≥ 0.72 → STRONG LONG
+≥ 0.58 → LEAN LONG
+≤ 0.28 → STRONG SHORT
+≤ 0.42 → LEAN SHORT
+else   → NEUTRAL
 ```
 
-### 2. Configure
+---
 
-```bash
-cp .env.example .env
-# Edit .env with your API keys:
-#   NANSEN_API_KEY=...
-#   ONCHAINOS_API_KEY=...
-#   ONCHAINOS_API_SECRET=...
-```
+## Copy Trade Selection
 
-### 3. Use CLI
+The `getCopyTradeSetup()` method filters positions for:
+- `upnl_usd > 0` — trader must be profitable
+- `leverage ≤ 20` — excludes reckless leverage
+- `dist_to_liq > 5%` — not near liquidation
 
-```bash
-# Scan for smart money alpha signals
-npx ts-node src/cli/index.ts scan
+Then selects the highest uPnL candidate and caps suggested leverage at 10x for safety.
 
-# Scan specific chains
-npx ts-node src/cli/index.ts scan --chain ethereum solana
-
-# View smart money holdings
-npx ts-node src/cli/index.ts holdings
-
-# Get a trade quote via OnchainOS
-npx ts-node src/cli/index.ts trade -t 0xTokenAddress -c xlayer -a 100
-
-# Check wallet balance
-npx ts-node src/cli/index.ts wallet -c xlayer
-
-# Start continuous monitoring
-npx ts-node src/cli/index.ts monitor --interval 300
-
-# Ask Nansen AI agent
-npx ts-node src/cli/index.ts agent "What tokens are funds buying on Solana?"
-```
-
-### 4. Run Agent Server
-
-```bash
-# Start the OnchainOS skill server
-npx ts-node src/agent/server.ts
-
-# The server exposes:
-# GET  /health            - Health check
-# GET  /skills            - List available skills
-# POST /skills/:name      - Execute a skill
-# POST /chat              - Natural language interface
-```
-
-## Alpha Detection Strategies
-
-The agent uses 4 complementary strategies that combine for higher accuracy:
-
-| Strategy | Data Source | What It Detects |
-|----------|-----------|----------------|
-| **Smart Money Accumulation** | Nansen Netflows | Tokens with strong net inflows from smart money + multiple traders |
-| **Fund Conviction** | Nansen Holdings | Tokens where smart money holdings are growing rapidly |
-| **DEX Buy Pressure** | Nansen DEX Trades | Tokens with high smart money buy/sell ratio on DEXes |
-| **Multi-Signal Convergence** | All above | Tokens flagged by 2+ independent strategies (boosted confidence) |
-
-### Confidence Scoring
-
-Each signal gets a **0-100% confidence score** based on:
-- Net flow magnitude (how much money is flowing in)
-- Trader count (how many smart wallets are involved)
-- Consistency (are 7d and 24h flows aligned?)
-- Market cap (smaller caps = higher alpha potential)
-- Buy pressure ratio (buyers vs sellers)
-
-Signals with 2+ strategies converging get a **20% confidence boost**.
-
-## OnchainOS Skills
-
-Five reusable skills that any OnchainOS agent can integrate:
-
-| Skill | Description | Credits |
-|-------|------------|---------|
-| `nansen_alpha_scan` | Detect alpha signals from smart money data | 5 |
-| `nansen_smart_money_holdings` | View top smart money holdings | 5 |
-| `nansen_fund_tracker` | Track fund buying/selling activity | 5 |
-| `nansen_signal_trade` | Detect signal + get/execute swap quote | 10 |
-| `nansen_ask` | Ask Nansen AI about on-chain data | 200-750 |
-
-### Example: Using Skills Programmatically
-
-```typescript
-import { NansenClient, OnchainOsClient, createNansenSkills, loadConfig } from 'nansen-onchainos-alpha-agent';
-
-const config = loadConfig();
-const nansen = new NansenClient(config.nansen.apiKey);
-const onchainOs = new OnchainOsClient(config.onchainOs.apiKey, config.onchainOs.apiSecret);
-const skills = createNansenSkills(nansen, onchainOs, config);
-
-// Execute alpha scan
-const scanner = skills.find(s => s.name === 'nansen_alpha_scan')!;
-const result = await scanner.execute({ chains: ['ethereum', 'xlayer'], min_confidence: 0.8 });
-console.log(result.data);
-```
-
-## CLI Commands
-
-| Command | Description |
-|---------|------------|
-| `scan` | Scan for smart money alpha signals with confidence scoring |
-| `holdings` | View top smart money holdings across chains |
-| `trade` | Get swap quote or execute trade via OnchainOS DEX aggregator |
-| `wallet` | Check wallet balances via OnchainOS |
-| `monitor` | Continuous monitoring with optional auto-trade |
-| `agent` | Ask Nansen AI agent natural language questions |
-
-## How This Fits the Hackathon
-
-### X Layer Arena
-- Trades execute through OnchainOS DEX aggregator with X Layer as default chain
-- Agent monitors and trades autonomously on X Layer
-- Full-stack: data intelligence (Nansen) + execution (OnchainOS) + AI agent
-
-### Skills Arena
-- 5 reusable skills any OnchainOS agent can integrate
-- Skill manifest for discovery
-- Natural language chat interface
-- HTTP API for programmatic access
-
-## Tech Stack
-
-- **TypeScript** — Type-safe codebase
-- **Nansen API** — Smart money data, token screening, AI agent
-- **OKX OnchainOS** — Wallet, DEX aggregation, market data
-- **Express** — Agent skill server
-- **Commander** — CLI framework
-- **Ethers.js** — Blockchain interaction utilities
+---
 
 ## Safety Features
 
-- **Three modes**: `monitor` (watch only), `alert` (notify), `auto-trade` (execute)
-- **Confidence thresholds** — Only trades above configurable confidence level
-- **Max trade size** — Configurable USD limit per trade
-- **Risk levels** — Low/medium/high risk profiles
-- **Dry run by default** — Must explicitly enable auto-trade mode
-- **Interactive confirmation** — CLI asks for confirmation before executing
+- **Dry run by default** — `trade` command never executes without `--live` flag
+- **Leverage hard cap** — max 20x enforced in both CLI and agent
+- **Trade size cap** — `MAX_TRADE_SIZE_USD` config limits agent auto-trade size
+- **Confirmation prompt** — live trades require interactive confirmation
+- **Mode gates** — agent only auto-trades in `AGENT_MODE=auto-trade`
+
+---
+
+## Nansen Hyperliquid Endpoints Used
+
+| Endpoint | Used for |
+|----------|----------|
+| `POST /api/v1/smart-money/perp-trades` | New smart money opens |
+| `POST /api/v1/perp-screener` | Token-level SM flows + OI + funding |
+| `POST /api/v1/tgm/perp-positions` | Who is long/short a specific token |
+| `POST /api/v1/profiler/perp-positions` | All positions for an address |
+
+Smart Money labels filtered: `Fund`, `Smart HL Perps Trader`, `Smart Trader`
+
+---
+
+## OKX OnchainOS Integration
+
+Uses the [Hyperliquid Plugin](https://web3.okx.com/onchainos/plugins/detail/hyperliquid) via OnchainOS Open API.
+
+Authentication: HMAC-SHA256 signature — `${timestamp}${METHOD}${path}${body}` using `OK-ACCESS-KEY` / `OK-ACCESS-SIGN` / `OK-ACCESS-TIMESTAMP` headers.
+
+---
+
+## Tech Stack
+
+- **TypeScript** with strict mode
+- **Commander.js** — CLI framework
+- **Nansen API** — Hyperliquid smart money data
+- **OKX OnchainOS** — Hyperliquid perp execution
+- **Express** — Agent skill HTTP server
+- **axios** — HTTP client with interceptors
+- **inquirer** — Interactive confirmation prompts
+- **cli-table3 + chalk + ora** — CLI UX
 
 ## License
 

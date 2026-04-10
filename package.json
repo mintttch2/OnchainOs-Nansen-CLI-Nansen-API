@@ -1,11 +1,11 @@
 {
-  "name": "nansen-onchainos-alpha-agent",
-  "version": "1.0.0",
-  "description": "AI Agent that combines Nansen Smart Money Intelligence with OKX OnchainOS for automated on-chain alpha discovery and execution",
+  "name": "hypernansen",
+  "version": "2.0.0",
+  "description": "Hyperliquid smart money intelligence CLI — Nansen perp data × OKX OnchainOS execution. Built for OKX Build X Hackathon 2026.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "nansen-os": "dist/cli/index.js"
+    "hypernansen": "dist/cli/index.js"
   },
   "scripts": {
     "build": "tsc",
@@ -19,11 +19,12 @@
     "nansen",
     "okx",
     "onchainos",
+    "hyperliquid",
     "smart-money",
-    "defi",
+    "perp",
+    "copy-trading",
     "ai-agent",
-    "xlayer",
-    "web3",
+    "defi",
     "hackathon"
   ],
   "author": "",
