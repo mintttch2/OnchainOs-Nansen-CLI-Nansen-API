@@ -1,6 +1,7 @@
 import { NansenHyperliquidClient } from '../nansen/hyperliquid-client';
 import { OnchainOsHyperliquidClient } from '../onchainos/hyperliquid-client';
 import { SkillDefinition, SkillResponse } from '../onchainos/types';
+import { SignalScorer } from '../strategies/signal-scorer';
 import { formatUsd } from '../utils/formatting';
 import { AppConfig } from '../config';
 
@@ -447,6 +448,100 @@ export function createHyperliquidSkills(
               dry_run: onchainHL.dryRun,
             },
             message: `${result.status.toUpperCase()}: ${result.side} ${result.token_symbol} ${formatUsd(sizeUsd)} @ ${leverage}x${dryRunNote}`,
+          };
+        } catch (err) {
+          return { success: false, data: null, message: String(err) };
+        }
+      },
+    },
+
+    // ── Skill 7: Smart Signal Score ────────────────────────────────────────
+    {
+      name: 'hl_signal_score',
+      description:
+        'Score all active Hyperliquid perp tokens on a 0-100 scale for trade-ability. ' +
+        'Combines sentiment, wallet count, net position, recent SM opens, and copy trade quality ' +
+        'into a single score. Used by the auto-trader to decide entries. ' +
+        'Scores ≥65 are "ready to trade", ≥75 are "strong opportunities".',
+      parameters: [
+        {
+          name: 'hours',
+          type: 'number' as const,
+          description: 'Lookback window in hours (default: 4)',
+          required: false,
+          default: 4,
+        },
+        {
+          name: 'limit',
+          type: 'number' as const,
+          description: 'Number of tokens to scan (default: 10)',
+          required: false,
+          default: 10,
+        },
+        {
+          name: 'min_score',
+          type: 'number' as const,
+          description: 'Minimum score to include in results (default: 0)',
+          required: false,
+          default: 0,
+        },
+      ],
+      execute: async (params): Promise<SkillResponse> => {
+        try {
+          const hours = (params.hours as number) || 4;
+          const limit = (params.limit as number) || 10;
+          const minScore = (params.min_score as number) || 0;
+
+          const scorer = new SignalScorer();
+
+          // Get screener data
+          const screenerRes = await nansenHL.getTopSmartMoneyPerps(hours, limit);
+          // Get recent SM trades
+          const tradesRes = await nansenHL.getSmartMoneyNewPositions(50);
+          const recentTrades = tradesRes.data;
+
+          const results = [];
+
+          for (const token of screenerRes.data) {
+            try {
+              const sentiment = await nansenHL.getSmartMoneySentiment(token.token_symbol);
+              if (sentiment.signal === 'neutral' && sentiment.confidence < 0.55) continue;
+
+              let copySetup = null;
+              try { copySetup = await nansenHL.getCopyTradeSetup(token.token_symbol); } catch { /* optional */ }
+
+              const scored = scorer.score(sentiment, recentTrades, token, copySetup);
+              if (scored.score >= minScore) {
+                results.push({
+                  token: scored.token,
+                  side: scored.side,
+                  score: scored.score,
+                  confidence: `${(scored.confidence * 100).toFixed(0)}%`,
+                  sentiment: scored.sentiment.signal,
+                  sm_opens: scored.recentOpens,
+                  sm_opens_usd: formatUsd(scored.recentOpensUsd),
+                  breakdown: {
+                    sentiment: scored.breakdown.sentimentScore,
+                    wallets: scored.breakdown.walletCountScore,
+                    net_position: scored.breakdown.netPositionScore,
+                    recent_opens: scored.breakdown.recentOpensScore,
+                    copy_quality: scored.breakdown.copyQualityScore,
+                  },
+                  copy_trader: scored.copySetup?.source_label ?? null,
+                });
+              }
+            } catch { /* skip token */ }
+          }
+
+          results.sort((a, b) => b.score - a.score);
+
+          const top = results.slice(0, 5);
+          const ready = results.filter(r => r.score >= 65);
+
+          return {
+            success: true,
+            data: results,
+            message: `${results.length} tokens scored. ${ready.length} trade-ready (≥65). Top: ${top.map(r => `${r.token} ${r.side} (${r.score})`).join(', ')}`,
           };
         } catch (err) {
           return { success: false, data: null, message: String(err) };

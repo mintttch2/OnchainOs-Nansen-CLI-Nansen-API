@@ -8,6 +8,7 @@ import { positionsCommand } from './commands/hl-positions';
 import { newPositionsCommand } from './commands/hl-new-positions';
 import { copyCommand } from './commands/hl-copy';
 import { tradeCommand } from './commands/hl-trade';
+import { autoCommand } from './commands/hl-auto';
 
 const program = new Command();
 
@@ -66,5 +67,69 @@ program
   .option('--limit-price <price>', 'Limit price (omit = Market order)')
   .option('--live', 'Submit real trade (default: dry run simulation)')
   .action(tradeCommand);
+
+program
+  .command('auto')
+  .description('Start autonomous smart money auto-trader (scans, scores, trades, manages positions)')
+  .option('-i, --interval <minutes>', 'Scan interval in minutes', '5')
+  .option('-r, --risk <level>', 'Risk level: low, medium, high', 'medium')
+  .option('--max-trade <usd>', 'Max trade size in USD', '500')
+  .option('--max-positions <n>', 'Max simultaneous positions', '4')
+  .option('--max-exposure <usd>', 'Max total exposure in USD', '2000')
+  .option('--stop-loss <pct>', 'Stop loss percentage', '5')
+  .option('--take-profit <pct>', 'Take profit percentage', '15')
+  .option('--trailing-stop <pct>', 'Trailing stop from peak PnL', '3')
+  .option('--lookback <hours>', 'Nansen screener lookback hours', '4')
+  .option('--tokens <n>', 'Number of tokens to scan per cycle', '12')
+  .option('--live', 'Execute real trades (default: dry run)')
+  .action(autoCommand);
+
+program
+  .command('stats')
+  .description('Show auto-trader performance stats from trade log')
+  .option('--json', 'Output as JSON')
+  .action(async (options: { json?: boolean }) => {
+    const { PortfolioTracker } = await import('../strategies/portfolio-tracker');
+    const tracker = new PortfolioTracker();
+    if (options.json) {
+      console.log(JSON.stringify({ stats: tracker.getStats(), trades: tracker.getAllTrades() }, null, 2));
+    } else {
+      const stats = tracker.getStats();
+      if (stats.totalTrades === 0) {
+        console.log(chalk.yellow('No trades recorded yet. Run `hypernansen auto` to start.'));
+        return;
+      }
+      console.log(chalk.cyan.bold('\nHyperNansen Auto-Trader Performance'));
+      console.log('─'.repeat(50));
+      console.log(tracker.getSummary());
+
+      // Show last 10 trades
+      const recent = tracker.getAllTrades().filter(t => t.status === 'closed').slice(-10).reverse();
+      if (recent.length > 0) {
+        const Table = (await import('cli-table3')).default;
+        const { formatUsd } = await import('../utils/formatting');
+        const table = new Table({
+          head: ['Token', 'Side', 'PnL', 'PnL%', 'Hold', 'Exit Reason'].map(h => chalk.gray(h)),
+        });
+        for (const t of recent) {
+          const pnlColor = t.pnlUsd >= 0 ? chalk.green : chalk.red;
+          const sideColor = t.side === 'Long' ? chalk.green : chalk.red;
+          const holdMin = t.exitTime
+            ? Math.round((new Date(t.exitTime).getTime() - new Date(t.entryTime).getTime()) / 60_000)
+            : 0;
+          table.push([
+            chalk.cyan(t.token),
+            sideColor(t.side),
+            pnlColor(formatUsd(t.pnlUsd)),
+            pnlColor(`${t.pnlPct >= 0 ? '+' : ''}${t.pnlPct.toFixed(2)}%`),
+            `${holdMin}m`,
+            t.exitReason || '-',
+          ]);
+        }
+        console.log('\n' + chalk.white.bold('Recent Trades (last 10):'));
+        console.log(table.toString());
+      }
+    }
+  });
 
 program.parse();

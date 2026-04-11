@@ -45,3 +45,15 @@ export type {
   SkillDefinition,
   SkillResponse,
 } from './onchainos/types';
+
+// ─── Auto-Trader Engine ──────────────────────────────────────────────────────
+
+export { SmartMoneyAutoTrader } from './strategies/auto-trader';
+export { SignalScorer } from './strategies/signal-scorer';
+export { RiskManager } from './strategies/risk-manager';
+export { PortfolioTracker } from './strategies/portfolio-tracker';
+
+export type { ScoredOpportunity, ScoreBreakdown } from './strategies/signal-scorer';
+export type { RiskConfig, RiskLevel, ActivePosition } from './strategies/risk-manager';
+export type { TradeRecord, PortfolioStats } from './strategies/portfolio-tracker';
+export type { AutoTraderConfig, CycleResult } from './strategies/auto-trader';
