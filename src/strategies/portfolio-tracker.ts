@@ -182,6 +182,89 @@ export class PortfolioTracker {
     return [...this.trades];
   }
 
+  // ─── ADAPTIVE PERFORMANCE ────────────────────────────────────────────────
+  // Track rolling performance windows so the bot can adapt its behavior
+  // when it's losing vs winning. This prevents spiraling loss streaks.
+
+  /**
+   * Get recent performance for adaptive threshold adjustment.
+   *
+   * Returns adjustments the copy engine should apply:
+   * - On losing streak: raise min score, reduce position size, extend cooldown
+   * - On winning streak: maintain current settings (don't get overconfident)
+   * - On neutral: standard settings
+   */
+  getAdaptiveAdjustments(): {
+    minScoreBoost: number;       // add to min score threshold (0 to +20)
+    sizeMultiplier: number;      // multiply position size (0.5 to 1.0)
+    cooldownMultiplier: number;  // multiply cooldown (1.0 to 2.0)
+    shouldPause: boolean;        // true if performance is terrible
+    reasoning: string;
+  } {
+    const closed = this.trades.filter(t => t.status === 'closed');
+    if (closed.length < 3) {
+      return { minScoreBoost: 0, sizeMultiplier: 1, cooldownMultiplier: 1, shouldPause: false, reasoning: 'Not enough trades for adaptation' };
+    }
+
+    // Last 5 trades
+    const last5 = closed.slice(-5);
+    const last5Pnl = last5.reduce((s, t) => s + t.pnlUsd, 0);
+    const last5Wins = last5.filter(t => t.pnlUsd > 0).length;
+
+    // Last 10 trades (if available)
+    const last10 = closed.slice(-10);
+    const last10Pnl = last10.reduce((s, t) => s + t.pnlUsd, 0);
+
+    // Consecutive loss streak
+    let lossStreak = 0;
+    for (let i = closed.length - 1; i >= 0; i--) {
+      if (closed[i].pnlUsd < 0) lossStreak++;
+      else break;
+    }
+
+    // ─── Terrible: 5 consecutive losses or last 10 deeply negative ───
+    if (lossStreak >= 5 || (last10.length >= 8 && last10Pnl < -last10.reduce((s, t) => s + t.sizeUsd, 0) * 0.1)) {
+      return {
+        minScoreBoost: 20,
+        sizeMultiplier: 0.5,
+        cooldownMultiplier: 2.0,
+        shouldPause: lossStreak >= 5,
+        reasoning: `Bad streak: ${lossStreak} consecutive losses, last 10 PnL: ${formatUsd(last10Pnl)} — ${lossStreak >= 5 ? 'PAUSING' : 'reducing activity'}`,
+      };
+    }
+
+    // ─── Losing: last 5 net negative ─────────────────────────────
+    if (last5Pnl < 0 && last5Wins <= 1) {
+      return {
+        minScoreBoost: 10,
+        sizeMultiplier: 0.7,
+        cooldownMultiplier: 1.5,
+        shouldPause: false,
+        reasoning: `Cold streak: last 5 trades net ${formatUsd(last5Pnl)} (${last5Wins}/5 wins) — raising bar`,
+      };
+    }
+
+    // ─── Neutral to slightly negative ────────────────────────────
+    if (last5Pnl < 0) {
+      return {
+        minScoreBoost: 5,
+        sizeMultiplier: 0.85,
+        cooldownMultiplier: 1.2,
+        shouldPause: false,
+        reasoning: `Slightly negative: last 5 trades net ${formatUsd(last5Pnl)} — minor adjustment`,
+      };
+    }
+
+    // ─── Positive: maintain course ───────────────────────────────
+    return {
+      minScoreBoost: 0,
+      sizeMultiplier: 1.0,
+      cooldownMultiplier: 1.0,
+      shouldPause: false,
+      reasoning: `Performing well: last 5 trades net ${formatUsd(last5Pnl)} (${last5Wins}/5 wins)`,
+    };
+  }
+
   /** Clear all data (use with caution) */
   reset(): void {
     this.trades = [];

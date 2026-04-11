@@ -3,6 +3,8 @@ import { OnchainOsHyperliquidClient } from '../onchainos/hyperliquid-client';
 import { PerpSide } from '../nansen/hyperliquid-types';
 import { TraderProfiler, TraderProfile, NewTraderMove, Timeframe } from './trader-profiler';
 import { MarketAnalyzer, MarketCondition } from './market-analyzer';
+import { MarketRegimeDetector, RegimeAnalysis } from './regime-detector';
+import { EntryQualityEstimator, EntryQuality } from './entry-quality';
 import { RiskManager, RiskLevel, ActivePosition } from './risk-manager';
 import { PortfolioTracker } from './portfolio-tracker';
 import { AppConfig } from '../config';
@@ -65,6 +67,8 @@ export class SmartMoneyCopyEngine {
   private onchainHL: OnchainOsHyperliquidClient;
   private profiler: TraderProfiler;
   private analyzer: MarketAnalyzer;
+  private regimeDetector: MarketRegimeDetector;
+  private entryEstimator: EntryQualityEstimator;
   private risk: RiskManager;
   private portfolio: PortfolioTracker;
   private config: CopyEngineConfig;
@@ -100,6 +104,8 @@ export class SmartMoneyCopyEngine {
 
     this.profiler = new TraderProfiler(nansenHL);
     this.analyzer = new MarketAnalyzer(nansenHL);
+    this.regimeDetector = new MarketRegimeDetector(nansenHL);
+    this.entryEstimator = new EntryQualityEstimator();
     this.risk = new RiskManager(this.config.riskLevel, {
       maxPerTradeUsd: this.config.maxTradeSizeUsd,
     });
@@ -162,6 +168,25 @@ export class SmartMoneyCopyEngine {
 
     logger.info(`── Copy Cycle #${this.cycleCount} ──────────────────────────────`);
 
+    // ─── Phase 0: Check global market regime ────────────────────────────────
+    // Should we trade at ALL in this cycle?
+    let globalRegime: RegimeAnalysis | null = null;
+    try {
+      globalRegime = await this.regimeDetector.detectGlobalRegime();
+      logger.info(`Regime: ${globalRegime.regime} (vol ${globalRegime.volatilityPct.toFixed(1)}%) — ${globalRegime.reasoning}`);
+    } catch (err) {
+      result.errors.push(`Regime: ${err}`);
+    }
+
+    // ─── Phase 0b: Check adaptive performance adjustments ────────────────────
+    const adaptive = this.portfolio.getAdaptiveAdjustments();
+    if (adaptive.minScoreBoost > 0 || adaptive.shouldPause) {
+      logger.info(`Adaptive: ${adaptive.reasoning}`);
+    }
+    if (adaptive.shouldPause) {
+      logger.warn('ADAPTIVE PAUSE: Recent performance too poor — skipping new entries');
+    }
+
     // ─── Phase 1: Refresh leaderboard if needed ─────────────────────────────
     await this.refreshLeaderboard(result);
     result.leaderboardSize = this.leaderboard.length;
@@ -170,17 +195,23 @@ export class SmartMoneyCopyEngine {
     await this.checkExistingPositions(result);
 
     // ─── Phase 3: Detect new moves from top traders ─────────────────────────
-    const moves = await this.detectAndFilterMoves(result);
+    const shouldScanNewMoves = !adaptive.shouldPause &&
+      (!globalRegime || globalRegime.shouldTrade);
+
+    let moves: NewTraderMove[] = [];
+    if (shouldScanNewMoves) {
+      moves = await this.detectAndFilterMoves(result);
+    }
     result.movesDetected = moves.length;
 
     // ─── Phase 4: Analyze market + decide for each move ─────────────────────
     for (const move of moves) {
       try {
-        const decision = await this.evaluateMove(move);
+        const decision = await this.evaluateMove(move, globalRegime, adaptive);
         result.decisions.push(decision);
 
         if (decision.decision === 'copy') {
-          const executed = await this.executeCopy(decision);
+          const executed = await this.executeCopy(decision, globalRegime);
           if (executed) {
             result.tradesExecuted.push(`${move.token} ${move.side}`);
           }
@@ -353,94 +384,148 @@ export class SmartMoneyCopyEngine {
 
   // ─── Phase 4: Move Evaluation ──────────────────────────────────────────────
 
-  private async evaluateMove(move: NewTraderMove): Promise<CopyDecision> {
+  private async evaluateMove(
+    move: NewTraderMove,
+    globalRegime: RegimeAnalysis | null,
+    adaptive: ReturnType<PortfolioTracker['getAdaptiveAdjustments']>,
+  ): Promise<CopyDecision> {
     logger.info(`Evaluating: ${move.trader.label.slice(0, 15)} [${move.trader.tier}] ${move.side} ${move.token} ${formatUsd(move.sizeUsd)}`);
 
-    // Run market analysis
+    // ─── Gate 1: Trader quality ─────────────────────────────────
+    if (move.trader.tier === 'C') {
+      return this.skipDecision(move, `Trader tier too low (${move.trader.tier}, score ${move.trader.score})`);
+    }
+    if (move.trader.isLikelyHedger) {
+      return this.skipDecision(move, `Trader likely hedging (risk ${(move.trader.hedgingRisk*100).toFixed(0)}%) — copying isolated leg is dangerous`);
+    }
+    if (move.trader.dependsOnSingleWin) {
+      return this.skipDecision(move, `Trader PnL depends on single position — could be luck`);
+    }
+
+    // ─── Gate 2: Correlation check ──────────────────────────────
+    const correlation = MarketRegimeDetector.checkCorrelationRisk(
+      move.token,
+      move.side,
+      this.activePositions.map(p => ({ token: p.token, side: p.side, sizeUsd: p.sizeUsd })),
+    );
+    if (correlation.excessive) {
+      return this.skipDecision(move,
+        `Correlation risk: already have ${correlation.existingCorrelated.join(',')} in '${correlation.group}' group same direction`
+      );
+    }
+
+    // ─── Gate 3: Entry quality (slippage check) ─────────────────
+    const currentPrice = await this.getCurrentPrice(move.token);
+    const leverage = this.risk.computeLeverage(move.trader.score);
+
+    // Get volatility for dynamic SL calculation
+    let tokenVol = 3; // default
+    try {
+      const vol = await this.regimeDetector.estimateVolatility(move.token);
+      tokenVol = vol.dailyRangePct;
+    } catch { /* use default */ }
+
+    const dynamicSL = MarketRegimeDetector.computeDynamicStopLoss(
+      this.risk.config.stopLossPct,
+      tokenVol,
+      leverage,
+    );
+
+    const entryQuality = this.entryEstimator.estimate(
+      move.token, move.side, move.price, currentPrice, leverage, dynamicSL,
+    );
+
+    if (!entryQuality.shouldEnter) {
+      return this.skipDecision(move, `Entry quality: ${entryQuality.reason}`);
+    }
+
+    // ─── Gate 4: Market analysis ────────────────────────────────
     const market = await this.analyzer.analyze(move.token, move.side);
 
-    // Log indicator results
     for (const line of market.reasoning) {
       logger.debug(`  ${line}`);
     }
 
-    // Decision logic: combine trader quality + market conditions
-    const traderQuality = move.trader.score / 100; // 0-1
-    const marketScore = market.compositeScore;      // -1 to +1
-
-    // Compute position size: scale by trader quality + market confirmation
-    const baseSize = Math.min(move.sizeUsd * this.config.sizeMultiplier, this.config.maxTradeSizeUsd);
-    const adjustedSize = Math.round(baseSize * (0.5 + traderQuality * 0.5));
-    const leverage = this.risk.computeLeverage(move.trader.score);
-
-    // Risk check
-    const riskCheck = this.risk.canOpenPosition(
-      move.token,
-      adjustedSize,
-      move.trader.score,
-      this.activePositions,
-      0, // equity (0 in dry run)
-    );
-
-    // Decision
-    if (!riskCheck.allowed) {
-      return {
-        move,
-        marketCondition: market,
-        decision: 'skip',
-        reason: `Risk: ${riskCheck.reason}`,
-        sizeUsd: 0,
-        leverage: 0,
-      };
-    }
-
     if (market.verdict === 'strong_reject' || market.verdict === 'reject') {
       return {
-        move,
-        marketCondition: market,
-        decision: 'skip',
-        reason: `Market rejects ${move.side}: ${market.verdict} (score: ${market.compositeScore}, ${market.confirmsPct}% confirm)`,
-        sizeUsd: 0,
-        leverage: 0,
+        move, marketCondition: market, decision: 'skip',
+        reason: `Market rejects ${move.side}: ${market.verdict} (${market.confirmsPct}% confirm)`,
+        sizeUsd: 0, leverage: 0,
       };
     }
 
-    if (marketScore < this.config.minMarketConfirmation) {
+    // Apply adaptive adjustment to market threshold
+    const effectiveMinMarket = this.config.minMarketConfirmation +
+      (adaptive.minScoreBoost / 100); // convert score boost to market score shift
+
+    if (market.compositeScore < effectiveMinMarket) {
       return {
-        move,
-        marketCondition: market,
-        decision: 'skip',
-        reason: `Market too weak: score ${market.compositeScore} < min ${this.config.minMarketConfirmation}`,
-        sizeUsd: 0,
-        leverage: 0,
+        move, marketCondition: market, decision: 'skip',
+        reason: `Market score ${market.compositeScore} < effective min ${effectiveMinMarket.toFixed(2)} (adaptive: +${adaptive.minScoreBoost})`,
+        sizeUsd: 0, leverage: 0,
       };
     }
 
-    // Trader tier check
-    if (move.trader.tier === 'C') {
+    // ─── Compute position size ──────────────────────────────────
+    // Use risk-based sizing: constant $ risk per trade, not constant $ size
+    let sizeUsd = MarketRegimeDetector.computeRiskBasedSize(
+      this.config.maxTradeSizeUsd,
+      5, // risk 5% of max per trade
+      dynamicSL,
+      leverage,
+    );
+
+    // Apply regime multiplier
+    if (globalRegime) {
+      sizeUsd = Math.round(sizeUsd * globalRegime.sizeMultiplier);
+    }
+
+    // Apply adaptive multiplier
+    sizeUsd = Math.round(sizeUsd * adaptive.sizeMultiplier);
+
+    // Apply entry quality multiplier
+    sizeUsd = Math.round(sizeUsd * this.entryEstimator.getSizeMultiplier(entryQuality.quality));
+
+    // ─── Final risk check ───────────────────────────────────────
+    const riskCheck = this.risk.canOpenPosition(
+      move.token, sizeUsd, move.trader.score,
+      this.activePositions, 0,
+    );
+
+    if (!riskCheck.allowed) {
       return {
-        move,
-        marketCondition: market,
-        decision: 'skip',
-        reason: `Trader tier too low (${move.trader.tier})`,
-        sizeUsd: 0,
-        leverage: 0,
+        move, marketCondition: market, decision: 'skip',
+        reason: `Risk: ${riskCheck.reason}`,
+        sizeUsd: 0, leverage: 0,
       };
     }
 
+    // ─── All gates passed: COPY ─────────────────────────────────
     return {
       move,
       marketCondition: market,
       decision: 'copy',
-      reason: `[${move.trader.tier}] trader (score ${move.trader.score}) + market ${market.verdict} (${market.compositeScore}, ${market.confirmsPct}% confirm)`,
-      sizeUsd: adjustedSize,
+      reason: `[${move.trader.tier}] (score ${move.trader.score}) + market ${market.verdict} (${market.confirmsPct}%) + entry ${entryQuality.quality} + regime ${globalRegime?.regime ?? '?'} | size ${formatUsd(sizeUsd)} @ ${leverage}x (SL ${dynamicSL}%)`,
+      sizeUsd,
       leverage,
+    };
+  }
+
+  private skipDecision(move: NewTraderMove, reason: string): CopyDecision {
+    return {
+      move,
+      marketCondition: {
+        token: move.token, side: move.side, timestamp: new Date(),
+        indicators: {} as any, compositeScore: 0, confirmsPct: 0,
+        verdict: 'neutral', reasoning: [],
+      },
+      decision: 'skip', reason, sizeUsd: 0, leverage: 0,
     };
   }
 
   // ─── Phase 5: Execution ────────────────────────────────────────────────────
 
-  private async executeCopy(decision: CopyDecision): Promise<boolean> {
+  private async executeCopy(decision: CopyDecision, globalRegime: RegimeAnalysis | null): Promise<boolean> {
     const { move, sizeUsd, leverage } = decision;
 
     try {

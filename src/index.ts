@@ -67,3 +67,9 @@ export { MarketAnalyzer } from './strategies/market-analyzer';
 export type { CopyEngineConfig, CopyDecision, CopyCycleResult } from './strategies/copy-engine';
 export type { TraderProfile, NewTraderMove, Timeframe } from './strategies/trader-profiler';
 export type { MarketCondition, IndicatorResult } from './strategies/market-analyzer';
+
+export { MarketRegimeDetector } from './strategies/regime-detector';
+export { EntryQualityEstimator } from './strategies/entry-quality';
+
+export type { MarketRegime, RegimeAnalysis, TokenVolatility } from './strategies/regime-detector';
+export type { EntryQuality } from './strategies/entry-quality';
