@@ -9,6 +9,8 @@ import { newPositionsCommand } from './commands/hl-new-positions';
 import { copyCommand } from './commands/hl-copy';
 import { tradeCommand } from './commands/hl-trade';
 import { autoCommand } from './commands/hl-auto';
+import { copybotCommand } from './commands/hl-copybot';
+import { leaderboardCommand } from './commands/hl-leaderboard';
 
 const program = new Command();
 
@@ -131,5 +133,26 @@ program
       }
     }
   });
+
+program
+  .command('leaderboard')
+  .description('Rank top smart money traders by PnL, win rate, and consistency')
+  .option('-t, --timeframe <period>', 'Timeframe: 24h, 7d, 30d', '7d')
+  .option('-l, --limit <n>', 'Number of traders to show', '15')
+  .option('--json', 'Output as JSON')
+  .action(leaderboardCommand);
+
+program
+  .command('copybot')
+  .description('Smart copy-trading bot — follows top traders + validates with market indicators')
+  .option('-i, --interval <minutes>', 'Scan interval in minutes', '3')
+  .option('-t, --timeframe <period>', 'Trader ranking timeframe: 24h, 7d, 30d', '7d')
+  .option('-r, --risk <level>', 'Risk level: low, medium, high', 'medium')
+  .option('--max-trade <usd>', 'Max trade size per copy', '500')
+  .option('--watch-count <n>', 'Number of top traders to watch', '10')
+  .option('--min-score <n>', 'Min trader score to follow (0-100)', '50')
+  .option('--min-market <score>', 'Min market confirmation score (-1 to 1)', '0.1')
+  .option('--live', 'Execute real trades (default: dry run)')
+  .action(copybotCommand);
 
 program.parse();

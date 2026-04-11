@@ -57,3 +57,13 @@ export type { ScoredOpportunity, ScoreBreakdown } from './strategies/signal-scor
 export type { RiskConfig, RiskLevel, ActivePosition } from './strategies/risk-manager';
 export type { TradeRecord, PortfolioStats } from './strategies/portfolio-tracker';
 export type { AutoTraderConfig, CycleResult } from './strategies/auto-trader';
+
+// ─── Smart Money Copy Engine ─────────────────────────────────────────────────
+
+export { SmartMoneyCopyEngine } from './strategies/copy-engine';
+export { TraderProfiler } from './strategies/trader-profiler';
+export { MarketAnalyzer } from './strategies/market-analyzer';
+
+export type { CopyEngineConfig, CopyDecision, CopyCycleResult } from './strategies/copy-engine';
+export type { TraderProfile, NewTraderMove, Timeframe } from './strategies/trader-profiler';
+export type { MarketCondition, IndicatorResult } from './strategies/market-analyzer';
